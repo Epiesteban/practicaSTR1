@@ -1,83 +1,90 @@
 #include <mbed.h>
-#include "DCMotor.h"
-#include "PID.h"
-#include <math.h>
-#include <stdio.h>
+#include <PID.h>
+#include <DCMotor.h>
 
-// Definicio de les constants
-#define MAX_SPEED 255
-#define MIN_SPEED 0
-#define DIRECT 0
-#define DIAMETER 6.6 //cm
-#define PERIMETER 20.7345 //2O.7345 cm
-#define PIN_SENSOR PG_0
+// DISTANCIALINEAL = 2 * PI * RADI / FORATS PER VOLTA
+const double DISTANCIALINEAL = (2 * 3.1416 * 0.033) / 80;
 
-Motor m(0);
-double setPoint=0.0;
+//Inicialitzacio de variables
+int i;
+Serial teclat(USBTX, USBRX);
+double kp=1.0;
+double ki=5.0;
+double kd=0.0;
 double input=0.0;
 double output=0.0;
-//2 5
-double kp = 0.1; //40
-double ki = 0.8;
-double Kd = 0;
+double velocitatAAsolir=0.0;
+double velocitatEscollida=0.0;
 
-int val = 0;
+//Motor
+Motor motor = Motor(0);
 
-double steps=0;
-char reached=0;
-int teclat = 0;
-int printControl=0;
-double velocitatActual=0;
-char inputStr[100];
-char outputStr[100];
-char velMotorStr[100];
-PID pid(&input, &output, &setPoint, kp, ki, Kd, 1 ,DIRECT); //input -> velocitat actual (sensor)
-InterruptIn interrupt((PinName)PIN_SENSOR);
-Ticker iVelocity;
-Serial serial1(USBTX, USBRX);
+//Cada cop que el sensor detecta 
+InterruptIn rsi(PG_0);
 
+//Timer
+int contInterrupcions=0;
+float tempsIniciVolta=0.0, tempsFinalVolta=0.0;
+Timer t;
 
-void askKeyboardSpeed()
-{
-  serial1.printf("Introdueix velocitat a arribar:");
-  scanf("%lf", &setPoint);
+// Inicialitzem el pid
+PID pid = PID(&input, &output, &velocitatEscollida, kp, ki, kd, 1, 0);
+
+void augmentarContador(){
+  contInterrupcions++;
 }
 
-void calculateVelocity(){
-  input = (steps*5/80)*PERIMETER; //31 cm/s vel max
-  pid.Compute();
-  m.setSpeed(output*100,0,0,0);
-  sprintf(inputStr, "input: %lf cm/s\t", input);
-  
-  serial1.printf(inputStr);
-  /*sprintf(velMotorStr, "Steps: %lf\n", steps);
-  serial1.printf(velMotorStr);*/
-  steps=0;
-  
-  sprintf(outputStr, "output: %lf cm/s\n", output);
-  serial1.printf(outputStr);
+void llegirVelocitat(){
+  teclat.printf("\nLlegint velocitat, entre 0 i 100");
+  teclat.scanf("%lf", &velocitatEscollida);
+  if (velocitatEscollida < 0) velocitatEscollida = 0;
+  else if (velocitatEscollida > 100) velocitatEscollida = 100;
 
-  //val = 1;
+  teclat.printf("\n%f", velocitatEscollida);
+  teclat.getc();
 }
 
-void count(){
-  steps++;
+void calculVelocitat(){
+  tempsFinalVolta = tempsIniciVolta;  
+  tempsIniciVolta = t.read();
+  input = ((contInterrupcions * DISTANCIALINEAL) / ((tempsIniciVolta-tempsFinalVolta)));   // velocitat lineal
+  contInterrupcions = 0;
+}
+
+void establimModeIVelocitats() {
+  pid.SetMode(1);
+  pid.SetOutputLimits(0, 100);
+  motor.Direction(0);
 }
 
 int main() {
 
-  // put your setup code here, to run once:
-  interrupt.enable_irq();
-  interrupt.rise(&count);
-  askKeyboardSpeed();
-  //setPoint=100;
-  m.Direction(M_FORWARD);
-  m.setSpeed(output*100,0,0,0);
-  
-  iVelocity.attach(&calculateVelocity, 0.2);
-  pid.SetMode(AUTOMATIC);
+  //Establim el mode de gir la direccio i la velocitat minima i maxima
+  establimModeIVelocitats();
+
+  //Engeguem les interrupcions amb la funció d'interrupcio
+  rsi.rise(&augmentarContador);
+
+  //Timer
+  tempsIniciVolta=0;
+  tempsFinalVolta=0;
+  t.start();
+
   while(1) {
-    // put your main code here, to run repeatedly:
-    pid.Compute();
+    //Detectem si escrivim per teclat per detectar la velocitat a la que volem anar
+    if(teclat.readable()){
+      llegirVelocitat();
+    }
+
+    wait(1);
+
+    //Fem el calcul de velocitat instantania
+    calculVelocitat();
+  
+    //Fem compute per aplicar la nova velocitat que ens retorna el pid
+    if(pid.Compute()){
+      teclat.printf("\nInput: %f Output: %f", input, output);
+      motor.setSpeed(output, 0, 0, 0);
+    } 
   }
 }
