@@ -2,55 +2,59 @@
 #include <PID.h>
 #include <DCMotor.h>
 
-// DISTANCIALINEAL = 2 * PI * RADI / FORATS PER VOLTA
+// DISTANCIALINEAL = 2 * PI * RADI(DIÀMETRE/2) / FORATS PER VOLTA
 const double DISTANCIALINEAL = (2 * 3.1416 * 0.033) / 80;
 
 //Inicialitzacio de variables
-int i;
 Serial teclat(USBTX, USBRX);
 double kp=1.0;
 double ki=5.0;
 double kd=0.0;
 double input=0.0;
 double output=0.0;
-double velocitatAAsolir=0.0;
-double velocitatEscollida=0.0;
+double setPoint=0.0;
 
-//Motor
+//Inicialitzem el motor
 Motor motor = Motor(0);
 
-//Cada cop que el sensor detecta 
+//Cada cop que el sensor detecta un forat de lencoder
 InterruptIn rsi(PG_0);
 
-//Timer
+//Inicialitzem el timer i les variables dinterrupcio
 int contInterrupcions=0;
-float tempsIniciVolta=0.0, tempsFinalVolta=0.0;
+float tempsInici=0.0, tempsFinal=0.0;
 Timer t;
 
-// Inicialitzem el pid
-PID pid = PID(&input, &output, &velocitatEscollida, kp, ki, kd, 1, 0);
+//Inicialitzem el pid
+PID pid = PID(&input, &output, &setPoint, kp, ki, kd, 1, 0);
 
+//Cada vegada que salta la rsi augmentem el contador en una unitat
 void augmentarContador(){
   contInterrupcions++;
 }
 
+//Llegim la velocitat escrita per lusuari, aquesta ha destar entre 0 i 100 unitats
 void llegirVelocitat(){
   teclat.printf("\nLlegint velocitat, entre 0 i 100");
-  teclat.scanf("%lf", &velocitatEscollida);
-  if (velocitatEscollida < 0) velocitatEscollida = 0;
-  else if (velocitatEscollida > 100) velocitatEscollida = 100;
+  teclat.scanf("%lf", &setPoint);
+  if (setPoint < 0) setPoint = 0;
+  else if (setPoint > 100) setPoint = 100;
 
-  teclat.printf("\n%f", velocitatEscollida);
+  teclat.printf("\n%f", setPoint);
   teclat.getc();
 }
 
+//Per calcular la velocitat dividirem el contador dinterrupcions i la distancia lineal que es recorreguda per interrupcio per el temps transcorregut
 void calculVelocitat(){
-  tempsFinalVolta = tempsIniciVolta;  
-  tempsIniciVolta = t.read();
-  input = ((contInterrupcions * DISTANCIALINEAL) / ((tempsIniciVolta-tempsFinalVolta)));   // velocitat lineal
+  tempsFinal = tempsInici;  
+  tempsInici = t.read();
+
+  // velocitat lineal
+  input = ((contInterrupcions * DISTANCIALINEAL) / ((tempsInici-tempsFinal)));
   contInterrupcions = 0;
 }
 
+ //Establim el mode(!=0 vol dir mode automàtic), l'escala de valors que pot retornar l'output i la direcció del motor (Endavant/endarrere)
 void establimModeIVelocitats() {
   pid.SetMode(1);
   pid.SetOutputLimits(0, 100);
@@ -59,15 +63,14 @@ void establimModeIVelocitats() {
 
 int main() {
 
-  //Establim el mode de gir la direccio i la velocitat minima i maxima
   establimModeIVelocitats();
 
   //Engeguem les interrupcions amb la funció d'interrupcio
   rsi.rise(&augmentarContador);
 
-  //Timer
-  tempsIniciVolta=0;
-  tempsFinalVolta=0;
+  //Engeguem timer
+  tempsInici=0;
+  tempsFinal=0;
   t.start();
 
   while(1) {
